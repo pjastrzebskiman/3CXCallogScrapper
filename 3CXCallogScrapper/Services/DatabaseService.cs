@@ -89,24 +89,61 @@ namespace _3CXCallogScrapper.Services
         {
             try
             {
+                if (!callLogs.Any())
+                {
+                    _logger.LogInformation("No call logs to save");
+                    return;
+                }
+                int newEntries = 0;
+                int duplicates = 0;
+
+                // Znajdź zakres czasowy przychodzących wpisów
+                var minStartTime = callLogs.Min(c => c.StartTime);
+                var maxStartTime = callLogs.Max(c => c.StartTime);
+
+                // Dodaj 1 dzień na wszelki wypadek (aby uwzględnić strefy czasowe i inne kwestie)
+                var searchStartTime = minStartTime.AddDays(-1);
+                var searchEndTime = maxStartTime.AddDays(1);
+
+                _logger.LogInformation("Searching for duplicates in time range: {StartTime} to {EndTime}",
+                    searchStartTime, searchEndTime);
+
+                // Pobierz listę wszystkich SegmentId, które już istnieją w bazie w danym przedziale czasowym
+                var existingSegmentIds = await _dbContext.CallLogs
+                    .Where(c => c.StartTime >= searchStartTime && c.StartTime <= searchEndTime)
+                    .Where(c => callLogs.Select(l => l.SegmentId).Contains(c.SegmentId))
+                    .Select(c => c.SegmentId)
+                    .ToListAsync();
+
+                _logger.LogInformation("Found {Count} existing entries in database that match incoming data", existingSegmentIds.Count);
+
                 foreach (var callLog in callLogs)
                 {
-                    // Check if the entry already exists
-                    var existingEntry = await _dbContext.CallLogs.FindAsync(callLog.SegmentId);
-                    if (existingEntry == null)
+                    // Sprawdź czy wpis już istnieje
+                    if (existingSegmentIds.Contains(callLog.SegmentId))
                     {
-                        // Add new entry
-                        await _dbContext.CallLogs.AddAsync(callLog);
-                        _logger.LogInformation("Adding new call log entry with SegmentId: {SegmentId}", callLog.SegmentId);
+                        _logger.LogDebug("Call log entry with SegmentId: {SegmentId} already exists, skipping", callLog.SegmentId);
+                        duplicates++;
+                        continue;
                     }
-                    else
-                    {
-                        _logger.LogDebug("Call log entry with SegmentId: {SegmentId} already exists", callLog.SegmentId);
-                    }
+
+                    // Dodaj nowy wpis
+                    await _dbContext.CallLogs.AddAsync(callLog);
+                    _logger.LogDebug("Adding new call log entry with SegmentId: {SegmentId}", callLog.SegmentId);
+                    newEntries++;
                 }
 
-                await _dbContext.SaveChangesAsync();
-                _logger.LogInformation("Saved {Count} call log entries to the database", callLogs.Count);
+                // Zapisz zmiany tylko jeśli są nowe wpisy
+                if (newEntries > 0)
+                {
+                    await _dbContext.SaveChangesAsync();
+                    _logger.LogInformation("Saved {Count} new call log entries to the database ({Duplicates} duplicates skipped)",
+                        newEntries, duplicates);
+                }
+                else
+                {
+                    _logger.LogInformation("No new call log entries to save ({Duplicates} duplicates skipped)", duplicates);
+                }
             }
             catch (Exception ex)
             {

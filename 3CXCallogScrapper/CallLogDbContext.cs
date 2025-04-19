@@ -36,6 +36,7 @@ namespace _3CXCallogScrapper
                 entity.Property(e => e.ActionDnCallerId).HasMaxLength(128);
                 entity.Property(e => e.ActionDnDisplayName).HasMaxLength(256);
                 entity.Property(e => e.Reason).HasMaxLength(512);
+                entity.HasIndex(e => e.StartTime);
             });
         }
     }

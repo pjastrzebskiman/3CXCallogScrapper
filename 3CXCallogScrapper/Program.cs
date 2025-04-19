@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
+using _3CXCallLogScraper.Services;
 
 
 var builder = Host.CreateApplicationBuilder(args);

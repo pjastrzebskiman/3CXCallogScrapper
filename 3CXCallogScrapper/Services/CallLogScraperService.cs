@@ -1,94 +1,91 @@
-﻿using _3CXCallogScrapper.Models;
+﻿using System.Text.Json;
+using System.Web;
+using _3CXCallogScrapper.Models;
+using _3CXCallogScrapper.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Polly;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
-using System.Web;
 
-namespace _3CXCallogScrapper.Services
+namespace _3CXCallLogScraper.Services;
+
+public class CallLogScraperService : BackgroundService
 {
-   public class CallLogScraperService : BackgroundService
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AuthenticationService _authService;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ThreeCXApiSettings _apiSettings;
+    private readonly ILogger<CallLogScraperService> _logger;
+
+    public CallLogScraperService(
+        IHttpClientFactory httpClientFactory,
+        AuthenticationService authService,
+        IOptions<ThreeCXApiSettings> apiSettings,
+        ILogger<CallLogScraperService> logger,
+        IServiceProvider serviceProvider)
     {
-        private readonly HttpClient _httpClient;
-        private readonly AuthenticationService _authService;
-        private readonly ThreeCXApiSettings _apiSettings;
-        private readonly ILogger<CallLogScraperService> _logger;
-        private readonly IServiceProvider _serviceProvider;
+        _httpClientFactory = httpClientFactory;
+        _authService = authService;
+        _apiSettings = apiSettings.Value;
+        _logger = logger;
+        _serviceProvider = serviceProvider;
+    }
 
-        public CallLogScraperService(
-            HttpClient httpClient,
-            AuthenticationService authService,
-            IOptions<ThreeCXApiSettings> apiSettings,
-            ILogger<CallLogScraperService> logger,
-            IServiceProvider serviceProvider)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        try
         {
-            _httpClient = httpClient;
-            _authService = authService;
-            _apiSettings = apiSettings.Value;
-            _logger = logger;
-            _serviceProvider = serviceProvider;
-        }
-
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            try
+            // Ensure database is set up
+            using (var scope = _serviceProvider.CreateScope())
             {
-                // Ensure database is set up
-                using (var scope = _serviceProvider.CreateScope())
-                {
-                    var dbService = scope.ServiceProvider.GetRequiredService<DatabaseService>();
-                    await dbService.EnsureDatabaseCreatedAsync();
-                }
-                // Set up polling interval
-                var intervalMinutes = _apiSettings.QueryIntervalMinutes;
-                _logger.LogInformation("Call log scraper service started. Polling every {IntervalMinutes} minutes", intervalMinutes);
-
-                while (!stoppingToken.IsCancellationRequested)
-                {
-                    try
-                    {
-                        await ScrapeCallLogsAsync(stoppingToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error occurred while scraping call logs");
-                    }
-
-                    await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
-                }
+                var dbService = scope.ServiceProvider.GetRequiredService<DatabaseService>();
+                await dbService.EnsureDatabaseCreatedAsync();
             }
-            catch (TaskCanceledException)
+
+            // Set up polling interval
+            var intervalMinutes = _apiSettings.QueryIntervalMinutes;
+            _logger.LogInformation("Call log scraper service started. Polling every {IntervalMinutes} minutes", intervalMinutes);
+
+            while (!stoppingToken.IsCancellationRequested)
             {
-                // Graceful shutdown
-                _logger.LogInformation("Call log scraper service is shutting down");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Fatal error in call log scraper service");
-                throw;
+                try
+                {
+                    await ScrapeCallLogsAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error occurred while scraping call logs");
+                }
+
+                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
             }
         }
-
-        private async Task ScrapeCallLogsAsync(CancellationToken cancellationToken)
+        catch (TaskCanceledException)
         {
-            _logger.LogInformation("Starting call log scraping process");
+            // Graceful shutdown
+            _logger.LogInformation("Call log scraper service is shutting down");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Fatal error in call log scraper service");
+            throw;
+        }
+    }
 
-            // Calculate time range
-            var now = DateTime.UtcNow;
-            var periodFrom = now.AddMinutes(-_apiSettings.LookbackMinutes).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
-            var periodTo = now.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+    private async Task ScrapeCallLogsAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting call log scraping process");
 
-            _logger.LogInformation("Fetching call logs from {PeriodFrom} to {PeriodTo}", periodFrom, periodTo);
+        // Calculate time range
+        var now = DateTime.UtcNow;
+        var periodFrom = now.AddMinutes(-_apiSettings.LookbackMinutes).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var periodTo = now.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
-            // Build the query URL with parameters
-            var queryParams = new Dictionary<string, string>
+        _logger.LogInformation("Fetching call logs from {PeriodFrom} to {PeriodTo}", periodFrom, periodTo);
+
+        // Build the query URL with parameters
+        var queryParams = new Dictionary<string, string>
         {
             { "periodFrom", periodFrom },
             { "periodTo", periodTo },
@@ -103,8 +100,19 @@ namespace _3CXCallogScrapper.Services
             { "hidePcalls", "true" }
         };
 
-            var queryString = string.Join(",", queryParams.Select(p => $"{p.Key}={HttpUtility.UrlEncode(p.Value)}"));
-            var url = $"{_apiSettings.BaseUrl.TrimEnd('/')}{_apiSettings.CallLogEndpoint}({queryString})?$top=100&$skip=0&$orderby=SegmentId desc";
+        var queryString = string.Join(",", queryParams.Select(p => $"{p.Key}={HttpUtility.UrlEncode(p.Value)}"));
+
+        // Lista do przechowywania wszystkich pobranych rekordów
+        var allCallLogs = new List<CallLogEntry>();
+        int pageSize = 100;
+        int skip = 0;
+        bool hasMoreRecords = true;
+
+        // Pobieranie danych z paginacją
+        while (hasMoreRecords && !cancellationToken.IsCancellationRequested)
+        {
+            var url = $"{_apiSettings.BaseUrl.TrimEnd('/')}{_apiSettings.CallLogEndpoint}({queryString})?$top={pageSize}&$skip={skip}&$orderby=SegmentId desc";
+            _logger.LogInformation("Fetching page with skip={Skip}, top={Top}", skip, pageSize);
 
             // Get access token and set up the request
             var token = await _authService.GetAccessTokenAsync();
@@ -126,7 +134,8 @@ namespace _3CXCallogScrapper.Services
                             retryCount, timeSpan);
                     });
 
-            var response = await retryPolicy.ExecuteAsync(async () => await _httpClient.SendAsync(request, cancellationToken));
+            var httpClient = _httpClientFactory.CreateClient();
+            var response = await retryPolicy.ExecuteAsync(async () => await httpClient.SendAsync(request, cancellationToken));
 
             if (!response.IsSuccessStatusCode)
             {
@@ -140,19 +149,40 @@ namespace _3CXCallogScrapper.Services
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
             var callLogResponse = JsonSerializer.Deserialize<CallLogResponse>(content);
 
-            if (callLogResponse?.Value == null || !callLogResponse.Value.Any())
+            if (callLogResponse?.Value == null)
             {
                 _logger.LogInformation("No call logs found for the specified period");
-                return;
+                break;
             }
 
-            _logger.LogInformation("Retrieved {Count} call log entries", callLogResponse.Value.Count);
+            int recordsInPage = callLogResponse.Value.Count;
+            _logger.LogInformation("Retrieved {Count} call log entries on page {Page}", recordsInPage, skip / pageSize + 1);
 
-            // Save to database
+            // Dodaj pobrane rekordy do całkowitej listy
+            allCallLogs.AddRange(callLogResponse.Value);
+
+            // Sprawdź, czy jest więcej rekordów do pobrania
+            if (recordsInPage < pageSize)
+            {
+                hasMoreRecords = false;
+                _logger.LogInformation("Reached the end of available records");
+            }
+            else
+            {
+                // Przygotuj do pobrania następnej strony
+                skip += pageSize;
+            }
+        }
+
+        _logger.LogInformation("Total number of call log entries retrieved: {Count}", allCallLogs.Count);
+
+        // Save to database
+        if (allCallLogs.Any())
+        {
             using (var scope = _serviceProvider.CreateScope())
             {
                 var dbService = scope.ServiceProvider.GetRequiredService<DatabaseService>();
-                await dbService.SaveCallLogsAsync(callLogResponse.Value);
+                await dbService.SaveCallLogsAsync(allCallLogs);
             }
         }
     }
