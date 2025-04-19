@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "3CXCallogScrapper": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
