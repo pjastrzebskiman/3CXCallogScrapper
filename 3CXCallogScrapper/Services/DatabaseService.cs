@@ -97,6 +97,23 @@ namespace _3CXCallogScrapper.Services
                 int newEntries = 0;
                 int duplicates = 0;
 
+                // Wyszukaj i zaloguj duplikaty po SegmentId w dostarczonej liście
+                var duplicateGroups = callLogs
+                    .GroupBy(c => c.SegmentId)
+                    .Where(g => g.Count() > 1)
+                    .ToList();
+                foreach (var group in duplicateGroups)
+                {
+                    _logger.LogWarning("Znaleziono duplikaty SegmentId={SegmentId}: {Count} wystąpień. Przykład: {Example}",
+                        group.Key, group.Count(), System.Text.Json.JsonSerializer.Serialize(group.First()));
+                }
+
+                // USUŃ duplikaty z listy callLogs po SegmentId
+                callLogs = callLogs
+                    .GroupBy(c => c.SegmentId)
+                    .Select(g => g.First())
+                    .ToList();
+
                 // Znajdź zakres czasowy przychodzących wpisów
                 var minStartTime = callLogs.Min(c => c.StartTime);
                 var maxStartTime = callLogs.Max(c => c.StartTime);
