@@ -21,6 +21,7 @@
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.21.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageReference Include="Polly" Version="8.5.2" />
+    <PackageReference Include="System.Text.Json" Version="9.0.4" />
 
 	<None Update="appsettings.json">
 		<CopyToOutputDirectory>Always</CopyToOutputDirectory>

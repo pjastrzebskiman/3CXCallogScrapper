@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using _3CXCallogScrapper;
@@ -11,9 +12,11 @@ using _3CXCallogScrapper;
 namespace _3CXCallogScrapper.Migrations
 {
     [DbContext(typeof(CallLogDbContext))]
-    partial class CallLogDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250707181847_UpdateDatabaseStructure")]
+    partial class UpdateDatabaseStructure
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
